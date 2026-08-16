@@ -22,7 +22,7 @@
  * @file
  * @ingroup Extensions
  * @author Chris Page <chris@starforge.co.uk>
- * @copyright Copyright © 2014 Chris Page
+ * @copyright Copyright © 2014-2016 Chris Page
  * @license GNU General Public Licence 2.0 or later
  */
 
@@ -254,32 +254,21 @@ class InteractiveTimeline {
 
 		// Establish any defaults that differ from timeline's own defaults
 		$options['selectable']= false;      // No point in making timeline entries selectable
-		$options['timeChangeable'] = false; // probably redundant as editable is false, but be sure.
 
 		// And now check any user-specified arguments
-		self::validateArgument( $options, $args, 'animate', 'boolean' );
-		self::validateArgument( $options, $args, 'animateZoom', 'boolean' );
-		self::validateArgument( $options, $args, 'axisOnTop', 'boolean' );
-		self::validateArgument( $options, $args, 'cluster', 'boolean' );
 		self::validateArgument( $options, $args, 'end', 'datetime' );
-		self::validateArgument( $options, $args, 'eventMargin', 'integer' );
-		self::validateArgument( $options, $args, 'eventMarginAxis', 'integer' );
-		//self::validateArgument( $options, $args, 'groupsOnRight', 'boolean' );
-		//self::validateArgument( $options, $args, 'groupsWidth', 'csssize' );
-		//self::validateArgument( $options, $args, 'groupMinheight', 'integer' );
 		self::validateArgument( $options, $args, 'height', 'csssize' );
 		self::validateArgument( $options, $args, 'locale', 'locale' );
 		self::validateArgument( $options, $args, 'max', 'datetime' );
 		self::validateArgument( $options, $args, 'min', 'datetime' );
 		self::validateArgument( $options, $args, 'minHeight', 'integer' );
 		self::validateArgument( $options, $args, 'moveable', 'boolean' );
-		self::validateArgument( $options, $args, 'stackEvents', 'boolean' );
+		self::validateArgument( $options, $args, 'stack', 'boolean' );
 		self::validateArgument( $options, $args, 'start', 'datetime' );
 		self::validateArgument( $options, $args, 'style', 'timestyle' );
 		self::validateArgument( $options, $args, 'showCurrentTime', 'boolean' );
 		self::validateArgument( $options, $args, 'showMajorLabels', 'boolean' );
 		self::validateArgument( $options, $args, 'showMinorLabels', 'boolean' );
-		self::validateArgument( $options, $args, 'showNavigation', 'boolean' );
 		self::validateArgument( $options, $args, 'width', 'csssize' );
 		self::validateArgument( $options, $args, 'zoomable', 'boolean' );
 		self::validateArgument( $options, $args, 'zoomMax', 'integer' );
@@ -301,8 +290,8 @@ class InteractiveTimeline {
 		// Sections are delimited by |
 		$parts = explode( "|", trim( $line ) );
 
-		// Lines *must* contsist of two parts: a date or interval, and the text
-		if ( count( $parts ) == 2 ) {
+		// Lines *must* consist of two or three parts: a date or interval, an optional group, and the text
+		if ( count( $parts ) == 2 || count( $parts ) == 3 ) {
 
 			// The first part might be an interval
 			$dates = explode( "/", $parts[0]);
@@ -321,7 +310,17 @@ class InteractiveTimeline {
 					}
 				}
 
-				$output .= Html::rawelement( 'div', array( 'class' => 'itl-body' ), $parts[1] );
+				// Two parts implies date and text...
+				if ( count( $parts ) == 2 ) {
+					$body = $parts[1];
+
+				// While three is date, group, and text
+				} else {
+					$body = $parts[2];
+					$output .= Html::rawelement( 'div', array( 'class' => 'itl-group' ), $parts[1] );
+				}
+				$output .= Html::rawelement( 'div', array( 'class' => 'itl-body' ), $body );
+
 
 				return $output;
 			}
@@ -375,7 +374,8 @@ class InteractiveTimeline {
 	 *                        this hook was used with.
 	 * @return string HTML to insert in the page.
 	 */
-	public static function parserHook( $input, $args = array(), $parser, $frame ) {
+	public static function parserHook( $input, $args, $parser, $frame ) {
+		global $wgITvisjsCDNcss, $wgITvisjsCDNjs;
 
 		static $tlNumber = 0;
 		$elemID = 'itimeline-' . ++$tlNumber;
@@ -383,30 +383,40 @@ class InteractiveTimeline {
 		$options = array();
 		self::buildTimelineOptions( $options, $args );
 
-		$events = self::buildTimelineEvents( $input, $parser, $frame );
+		$timelinedata = self::buildTimelineEvents( $input, $parser, $frame );
 
-		// Store the timeline setup and events in the mediawiki config object
-		$parserOutput = $parser -> getOutput();
-		$parserOutput -> addJSConfigVars( $elemID, FormatJson::encode( $options ) );
+		// Load InteractiveTimeline assets only when an <itimeline> is actually used.
+		$parserOutput = $parser->getOutput();
 
-		return Html::rawelement( 'div', array( 'id' => $elemID, 'class' => 'itimeline' ), $events );
-	}
+		$parserOutput->addModules( array(
+			'ext.InteractiveTimeline.loader'
+		) );
 
+		$script = '
+			<link rel="stylesheet" type="text/css" href="' . htmlspecialchars( $wgITvisjsCDNcss ) . '">
+			<script type="text/javascript" src="' . htmlspecialchars( $wgITvisjsCDNjs ) . '"></script>
+		';
 
-	/**
-	 * Add the Interactive Timeline resource modules to the load queue of all pages.
-	 *
-	 * @param OutputPage $out Instance of OutputPage.
-	 * @param Skin $skin The skin instance.
-	 * @return boolean Always returns true.
-	 */
-	public static function onBeforePageDisplay( &$out, &$skin ) {
+		$parserOutput->addHeadItem(
+			$script,
+			'InteractiveTimeline CDN'
+		);
 
-		// Ensure that the required resource modules are loaded
-		$out->addModules( 'ext.InteractiveTimeline.loader' );
-		$out->addModules( 'ext.InteractiveTimeline.timeline' );
+		// Store the timeline setup
+		$timelinedata .= Html::rawelement(
+			'div',
+			array( 'class' => 'itl-config' ),
+			FormatJson::encode( $options )
+		);
 
-		return true;
+		return Html::rawelement(
+			'div',
+			array(
+				'id' => $elemID,
+				'class' => 'itimeline'
+			),
+			$timelinedata
+		);
 	}
 
 
